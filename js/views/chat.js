@@ -1,6 +1,7 @@
 import { state, update, logAction } from '../store.js';
 import * as AI from '../ai.js';
 import { icon, toast, modal, field } from '../ui.js';
+import { scanButton } from '../scan.js';
 import { h, md, $ } from '../util.js';
 
 const EXAMPLES = [
@@ -168,7 +169,7 @@ export default {
     if (pre) { sessionStorage.removeItem('compass:prompt'); setTimeout(() => ask(pre)); }
     const msgs = state.chat.map(messageHTML).join('');
     return `<header class="page-head"><h1>Assistant</h1><span class="row">
-        ${state.settings.apiKey ? `<button class="btn small" data-act="pasteEmail">${icon('mail', 16)} Paste email</button>` : ''}
+        ${state.settings.apiKey ? `${scanButton('Photo')}<button class="btn small" data-act="pasteEmail">${icon('mail', 16)} Email</button>` : ''}
         ${state.chat.length ? '<button class="btn ghost small" data-act="newChat">New chat</button>' : ''}</span></header>
       ${state.settings.apiKey ? '' : '<p class="notice">Offline mode: quick answers from your own data. Add a Claude API key in <a href="#settings">Settings</a> for full conversations, planning and email-to-task extraction.</p>'}
       <div class="chat" id="chat-log" aria-live="polite">

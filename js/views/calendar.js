@@ -3,6 +3,7 @@ import { occurrences, dayOccurrences, conflicts, freeSlots } from '../planner.js
 import { eventRow } from '../components.js';
 import { icon, empty } from '../ui.js';
 import { openEvent } from '../forms.js';
+import { scanButton } from '../scan.js';
 import { h, fmtDate, fmtTime, addDays, startOfDay, startOfWeek, sameDay, dayKey, toLocalInput, minutesBetween, fmtDuration, parseLocal } from '../util.js';
 
 let mode = 'week';
@@ -64,7 +65,7 @@ export default {
   title: 'Calendar',
   render() {
     return `<header class="page-head"><h1>${title()}</h1>
-      <button class="btn primary" data-act="newEvent">${icon('plus', 18)} Event</button></header>
+      <span class="row">${state.settings.apiKey ? scanButton('Scan') : ''}<button class="btn primary" data-act="newEvent">${icon('plus', 18)} Event</button></span></header>
       <div class="toolbar">
         <div class="seg" role="tablist">${['day', 'week', 'month'].map((m) => `<button role="tab" aria-selected="${mode === m}" class="${mode === m ? 'on' : ''}" data-act="mode" data-mode="${m}">${m[0].toUpperCase() + m.slice(1)}</button>`).join('')}</div>
         <div class="nav-btns"><button class="icon-btn" data-act="prev" aria-label="Previous">${icon('left')}</button><button class="btn ghost small" data-act="today">Today</button><button class="icon-btn" data-act="next" aria-label="Next">${icon('right')}</button></div>

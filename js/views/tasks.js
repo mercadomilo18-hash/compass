@@ -3,6 +3,7 @@ import { openTasks } from '../planner.js';
 import { taskRow, subtaskList } from '../components.js';
 import { icon, empty, modal, field, select, toast, bar, confirmSheet } from '../ui.js';
 import { openTask } from '../forms.js';
+import { scanButton } from '../scan.js';
 import * as School from '../school.js';
 import { h, uid, parseLocal, startOfDay, addDays, fmtDate, fmtTime, relDue } from '../util.js';
 
@@ -188,7 +189,7 @@ export default {
           : empty('Add each course with the grade breakdown from its outline (e.g. Labs 20%, Midterm 25%, Final 35%). Compass works out your current grade and what you need.', `<button class="btn" data-act="newCourse">Add a course</button>`)}</section>
         <p class="muted small">Letter grades use the common Ontario college scale (A+ 90+, A 85, A- 80, B+ 77 … D- 50). Your course outline is the final word.</p>`;
     }
-    const head = `<header class="page-head"><h1>Tasks</h1><button class="btn primary" data-act="newTask">${icon('plus', 18)} Task</button></header>
+    const head = `<header class="page-head"><h1>Tasks</h1><span class="row">${state.settings.apiKey ? scanButton('Scan') : ''}<button class="btn primary" data-act="newTask">${icon('plus', 18)} Task</button></span></header>
       <div class="toolbar">${seg}<span class="muted small">Sorted by urgency</span></div>`;
     if (tab === 'done') {
       const done = state.tasks.filter((t) => t.done).sort((a, b) => (b.doneAt || '').localeCompare(a.doneAt || ''));

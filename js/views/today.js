@@ -6,7 +6,8 @@ import * as Plans from '../plans.js';
 import { eventRow, taskRow, briefingHTML, recapHTML } from '../components.js';
 import { icon, modal, ring, empty, toast, bar } from '../ui.js';
 import { openEvent, openTask } from '../forms.js';
-import { emailPrompt } from '../ai.js';
+import { emailPrompt, applyTool, describeTool } from '../ai.js';
+import { dismissInbox } from '../connect.js';
 import { h, fmtDate, fmtTime, dayKey, toLocalInput, uid, relDue } from '../util.js';
 
 let plan = [];
@@ -95,6 +96,15 @@ const cards = {
   },
 };
 
+// Things you asked Siri to add, waiting for a yes/no.
+function voiceInboxCard() {
+  const items = state.voiceInbox || [];
+  if (!items.length) return '';
+  return `<section class="card accent"><div class="card-head"><h2>${icon('mic', 18)} From Siri — approve?</h2></div>
+    ${items.map((x) => { const d = describeTool(x.name, x.input); return `<div class="approval"><div><div class="muted small">“${h(x.question)}” · ${h(d.title)}</div><strong>${h(d.body)}</strong></div>
+      <div class="approval-btns"><button class="btn small ghost" data-act="voiceDecline" data-id="${h(x.id)}">Decline</button><button class="btn small primary" data-act="voiceApprove" data-id="${h(x.id)}">Approve</button></div></div>`; }).join('')}</section>`;
+}
+
 const blockFromPlan = (p) => ({ id: uid(), title: p.title, start: toLocalInput(p.start), end: toLocalInput(p.end), allDay: false, category: p.kind, repeat: 'none', source: 'plan', taskId: p.taskId || '' });
 
 export default {
@@ -106,9 +116,23 @@ export default {
     if (!on.includes('briefing')) plan = briefing(state, now).plan;
     return `<header class="page-head"><div><p class="muted">${fmtDate(now, { weekday: 'long', month: 'long', day: 'numeric' })}</p>
       <h1>${greeting(now)}${state.settings.name ? `, ${h(state.settings.name)}` : ''}</h1></div></header>
+      ${voiceInboxCard()}
       <div class="grid">${on.map((id) => cards[id]?.(now) || '').join('')}</div>`;
   },
   act: {
+    voiceApprove: async (el) => {
+      const item = state.voiceInbox.find((x) => x.id === el.dataset.id);
+      if (!item) return;
+      try {
+        update((s) => { const summary = applyTool(s, item.name, item.input); logAction('ai', `From Siri: ${summary}`, 'approved', 'Compass voice'); s.voiceInbox = s.voiceInbox.filter((x) => x.id !== item.id); });
+        toast('Added');
+      } catch (e) { toast(e.message); return; }
+      dismissInbox(item.id).catch(() => {});
+    },
+    voiceDecline: (el) => {
+      update((s) => { s.voiceInbox = s.voiceInbox.filter((x) => x.id !== el.dataset.id); logAction('ai', 'Declined a Siri request', 'declined', 'Compass voice'); });
+      dismissInbox(el.dataset.id).catch(() => {});
+    },
     newEvent: () => openEvent({ start: toLocalInput(new Date()) }),
     newTask: () => openTask(),
     openBriefing: () => modal({ title: `Briefing · ${fmtDate(new Date())}`, body: `<div class="prose">${briefingHTML(briefing(state, new Date()))}</div>` }),

@@ -17,8 +17,6 @@ const FILE_IMPORTS = [
 ];
 
 const LIVE = [
-  { key: 'google', name: 'Gmail + Google Calendar', how: 'Read-only. Sign in with Google.' },
-  { key: 'microsoft', name: 'Outlook / Mohawk email + calendar', how: 'Read-only. Sign in with Microsoft. (Mohawk may require IT approval for third-party apps.)' },
   { key: 'canvas', name: 'Canvas (live)', how: 'Courses, assignments, grades, missing work and announcements, checked every time Compass syncs.' },
   { key: 'plaid', name: 'Bank (Plaid, read-only)', how: 'Balances and transactions. Sign-in happens in Plaid’s window; Compass never sees your bank password and can’t move money.' },
   { key: 'push', name: 'Exact-time notifications', how: '7 AM briefing and evening recap even when Compass is closed.' },
@@ -41,7 +39,31 @@ function liveHTML() {
   if (srv.error) return `<p class="bad-text small">${h(srv.error)}</p><button class="btn small" data-act="refreshServer">Retry</button>`;
   const st = srv.data.status || {};
   const ago = (iso) => { if (!iso) return 'never'; const m = Math.round((Date.now() - new Date(iso)) / 60000); return m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : new Date(iso).toLocaleDateString(); };
-  return `<ul class="list">${LIVE.map((x) => {
+  const acctRow = (a) => {
+    const s = st[a.id] || {};
+    return `<li class="item integ"><div class="what"><strong>${a.provider === 'google' ? 'Gmail' : 'Outlook'} · ${h(a.email)}</strong>
+      <div class="meta">${s.error ? '<span class="chip bad">Error</span>' : '<span class="chip good">Connected</span>'}<span class="muted small">last sync ${ago(s.lastSync)}</span></div>
+      ${s.error ? `<p class="bad-text small">${h(s.error)}${a.provider === 'google' ? ' — Google makes personal apps sign in again every 7 days; tap Reconnect.' : ''}</p>` : ''}</div>
+      <div class="stack-btns">${s.error ? `<button class="btn small primary" data-act="addAccount" data-p="${a.provider}">Reconnect</button>` : ''}<button class="btn small ghost" data-act="removeAccount" data-id="${h(a.id)}">Remove</button></div></li>`;
+  };
+  const feedRow = (f) => {
+    const err = state.meta.syncErrors?.[`feed:${f.id}`];
+    return `<li class="item integ"><div class="what"><strong>${h(f.name)}</strong>
+      <div class="meta">${err ? '<span class="chip bad">Error</span>' : '<span class="chip good">Syncing</span>'}<span class="chip">${f.kind === 'canvas' ? 'Canvas' : f.type === 'csv' ? 'Sheet (CSV)' : 'Calendar'}</span><span class="muted small">last sync ${ago(st.feeds?.lastSync)}</span></div>
+      ${err ? `<p class="bad-text small">${h(err)}</p>` : ''}</div><button class="btn small ghost" data-act="removeFeed" data-id="${h(f.id)}">Remove</button></li>`;
+  };
+  return `<h3>Email &amp; calendar accounts</h3>
+  <ul class="list">${srv.data.accounts.map(acctRow).join('') || '<li class="muted small">No email accounts yet. Add as many Gmail and Outlook accounts as you like.</li>'}</ul>
+  <div class="row wrap">
+    ${srv.data.configured.google ? '<button class="btn small" data-act="addAccount" data-p="google">+ Gmail account</button>' : '<span class="chip">Gmail: not set up on server</span>'}
+    ${srv.data.configured.microsoft ? '<button class="btn small" data-act="addAccount" data-p="microsoft">+ Outlook account</button>' : '<span class="chip">Outlook: not set up on server</span>'}
+  </div>
+  <p class="muted small">Read-only. Other providers (Yahoo, iCloud Mail…) aren’t supported yet — forward them to Gmail.</p>
+  <h3>Calendar links <span class="muted">(auto-sync, never expire)</span></h3>
+  <ul class="list">${srv.data.feeds.map(feedRow).join('') || '<li class="muted small">Add Canvas, Google Calendar, Outlook, iCloud or a published Google Sheet — no more manual imports.</li>'}</ul>
+  <button class="btn small" data-act="addFeed">+ Calendar link</button>
+  <h3>School, bank &amp; notifications</h3>
+  <ul class="list">${LIVE.map((x) => {
     const s = st[x.key] || {};
     const configured = srv.data.configured[x.key];
     const chip = !configured ? '<span class="chip">Not set up on server</span>'
@@ -53,7 +75,12 @@ function liveHTML() {
       <div class="meta">${chip}${s.connected && x.key !== 'push' ? `<span class="muted small">last sync ${ago(s.lastSync)}</span>` : ''}${x.key === 'plaid' && srv.data.plaidEnv === 'sandbox' ? '<span class="chip warn">sandbox</span>' : ''}</div>
       ${s.error ? `<p class="bad-text small">${h(s.error)}</p>` : ''}<p class="muted small">${h(x.how)}</p></div><div class="stack-btns">${btn}</div></li>`;
   }).join('')}</ul>
-  <div class="row"><button class="btn small" data-act="syncNow">Sync now</button><button class="btn small ghost danger" data-act="wipeServer">Delete all server data</button></div>`;
+  <h3>Voice — “Hey Siri, ask Compass”</h3>
+  ${!srv.data.configured.voice ? '<p class="muted small">Not set up on the server yet (needs ANTHROPIC_API_KEY — see server/SETUP.md).</p>'
+    : `<label class="check"><input type="checkbox" data-act="toggleVoice" ${state.settings.voiceShare ? 'checked' : ''}> Share a summary of my schedule, tasks, money and goals with my server so Siri can answer</label>
+      <p class="muted small">Stored encrypted on your own server and refreshed each sync. Turn off to delete it. Anything Siri wants to add waits for your approval on the Today screen.</p>
+      ${state.settings.voiceShare ? '<button class="btn small" data-act="siriHelp">Set up the Siri Shortcut</button>' : ''}`}
+  <div class="row top-gap"><button class="btn small" data-act="syncNow">Sync now</button><button class="btn small ghost danger" data-act="wipeServer">Delete all server data</button></div>`;
 }
 
 export default {
@@ -157,6 +184,65 @@ export default {
   },
   act: {
     refreshServer: () => loadServer(),
+    toggleVoice: async (el) => {
+      update((s) => { s.settings.voiceShare = el.checked; logAction('security', `Voice sharing ${el.checked ? 'on' : 'off'}`); });
+      try { if (el.checked) { await Connect.pushContext(); toast('Voice ready'); } else { await Connect.clearContext(); toast('Summary deleted from server'); } } catch (e) { toast(e.message); }
+    },
+    siriHelp: () => modal({
+      title: 'Set up “Ask Compass” in Siri',
+      body: `<ol class="steps small">
+        <li>Open the <b>Shortcuts</b> app → <b>+</b> (new shortcut).</li>
+        <li>Add action <b>Dictate Text</b>.</li>
+        <li>Add action <b>Get Contents of URL</b>. Set the URL to <code>${h(state.settings.serverUrl)}/ask</code>, then tap <b>Show More</b>:
+          <ul><li>Method: <b>POST</b></li><li>Headers: add <b>Authorization</b> = <code>Bearer</code> + a space + your pairing token (from keys.html)</li><li>Request Body: <b>JSON</b>, add a Text field <b>question</b> = <i>Dictated Text</i></li></ul></li>
+        <li>Add action <b>Get Dictionary Value</b>: key <b>answer</b>.</li>
+        <li>Add action <b>Speak Text</b> (Dictionary Value).</li>
+        <li>Name the shortcut <b>Ask Compass</b>.</li></ol>
+        <p>Then say: <b>“Hey Siri, Ask Compass”</b> — and ask “What’s on tomorrow?”, “How much can I spend this week?”, or “Remind me to email my prof Friday at 3”.</p>
+        <p class="muted small">Works from your iPhone, AirPods, Apple Watch and CarPlay. The token stays inside your shortcut on your phone.</p>`,
+    }),
+    addAccount: async (el) => { try { await Connect.startOAuth(el.dataset.p); } catch (e) { toast(e.message, 6000); } },
+    removeAccount: async (el) => {
+      if (!(await confirmSheet('Remove this account?', 'Access is revoked and its emails and calendar events are removed from Compass.', 'Remove'))) return;
+      try { await Connect.removeAccount(el.dataset.id); update((s) => logAction('security', `Removed account ${el.dataset.id.split(':').slice(1).join(':')}`)); await Connect.sync(); } catch (e) { toast(e.message); }
+      loadServer();
+    },
+    addFeed: () => modal({
+      title: 'Add a calendar link',
+      body: `${field('What is it?', select('kind', { canvas: 'Canvas (Mohawk)', google: 'Google Calendar', outlook: 'Outlook / Mohawk calendar', icloud: 'Apple iCloud calendar', sheet: 'Google Sheet (church schedule)', other: 'Other .ics link' }, 'canvas'))}
+        <div class="feed-help small" data-help></div>
+        ${field('Name', '<input name="name" placeholder="e.g. Canvas, Church schedule">')}
+        ${field('Private link', '<input name="url" type="url" inputmode="url" autocomplete="off" spellcheck="false" placeholder="https://… or webcal://…" required>', 'Stored encrypted on your server. Anyone with this link can see that calendar, so don’t share it.')}
+        ${field('Category for events', select('category', { class: 'Class', school: 'School', work: 'Work', church: 'Church', personal: 'Personal' }, 'class'))}`,
+      submit: 'Add & sync',
+      onOpen: (form) => {
+        const HELP = {
+          canvas: 'Canvas → <b>Calendar</b> → <b>Calendar Feed</b> (bottom right) → copy the link. Assignments become tasks.',
+          google: 'On a computer: Google Calendar → ⚙ Settings → click your calendar → <b>Integrate calendar</b> → copy <b>Secret address in iCal format</b>.',
+          outlook: 'Outlook on the web → ⚙ Settings → Calendar → <b>Shared calendars</b> → <b>Publish a calendar</b> → “Can view all details” → copy the <b>ICS</b> link. (Mohawk may have publishing turned off.)',
+          icloud: 'iPhone Calendar app → Calendars → ⓘ next to the calendar → turn on <b>Public Calendar</b> → Share Link → Copy.',
+          sheet: 'Google Sheets → <b>File → Share → Publish to web</b> → pick the sheet → <b>Comma-separated values (.csv)</b> → Publish → copy the link. Columns: Date, Start, End, Title, Location.',
+          other: 'Any calendar that gives you an .ics or webcal:// link.',
+        };
+        const cat = { canvas: 'class', google: 'personal', outlook: 'school', icloud: 'personal', sheet: 'church', other: 'personal' };
+        const name = { canvas: 'Canvas', google: 'Google Calendar', outlook: 'Outlook calendar', icloud: 'iCloud calendar', sheet: 'Church schedule', other: 'Calendar' };
+        const sync = () => { form.querySelector('[data-help]').innerHTML = HELP[form.kind.value]; form.category.value = cat[form.kind.value]; form.name.placeholder = name[form.kind.value]; };
+        form.kind.addEventListener('change', sync); sync();
+      },
+      onSubmit: async (v, form) => {
+        try {
+          await Connect.addFeed({ name: v.name || form.name.placeholder, url: v.url, category: v.category, kind: v.kind === 'canvas' ? 'canvas' : '', type: v.kind === 'sheet' ? 'csv' : undefined });
+          toast('Calendar added — syncing…');
+          await Connect.sync();
+          loadServer();
+        } catch (e) { toast(e.message, 6000); return false; }
+      },
+    }),
+    removeFeed: async (el) => {
+      if (!(await confirmSheet('Remove this calendar link?', 'Its events are removed from Compass and the link is deleted from your server.', 'Remove'))) return;
+      try { await Connect.removeFeed(el.dataset.id); await Connect.sync(); } catch (e) { toast(e.message); }
+      loadServer();
+    },
     unpair: async () => {
       if (!(await confirmSheet('Unpair server?', 'Compass stops syncing. Your accounts stay connected on the server until you disconnect them there.', 'Unpair'))) return;
       update((s) => { s.settings.serverToken = ''; });
