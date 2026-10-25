@@ -1,9 +1,9 @@
 // Offline support: app files are served from cache and refreshed in the background.
-const CACHE = 'compass-v2';
+const CACHE = 'compass-v3';
 const SHELL = [
   './', 'index.html', 'styles.css', 'manifest.webmanifest', 'icons/icon.svg', 'icons/icon-180.png', 'icons/icon-192.png',
   'js/app.js', 'js/store.js', 'js/util.js', 'js/ui.js', 'js/forms.js', 'js/components.js', 'js/planner.js', 'js/bible.js',
-  'js/plans.js', 'js/school.js', 'js/finance.js', 'js/connect.js', 'js/ics.js', 'js/ai.js', 'js/notify.js',
+  'js/plans.js', 'js/school.js', 'js/finance.js', 'js/connect.js', 'js/ics.js', 'js/ai.js', 'js/notify.js', 'js/scan.js',
   'js/views/today.js', 'js/views/calendar.js', 'js/views/tasks.js', 'js/views/money.js', 'js/views/habits.js', 'js/views/bible.js',
   'js/views/chat.js', 'js/views/settings.js',
 ];
