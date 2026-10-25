@@ -9,6 +9,7 @@ const P = {
   habits: '<circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/>',
   bible: '<path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h11M12 7v5M9.5 9h5"/>',
   chat: '<path d="M4 5h16v11H9l-5 4z"/>',
+  camera: '<path d="M4 8h3l2-3h6l2 3h3a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9a1 1 0 0 1 1-1z"/><circle cx="12" cy="13.5" r="3.5"/>',
   money: '<rect x="2.5" y="6" width="19" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 9.5v5M18 9.5v5"/>',
   mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/>',
   copy: '<rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/>',
@@ -76,6 +77,7 @@ export function formValues(form) {
     if (!el.name) continue;
     if (el.type === 'checkbox') out[el.name] = el.checked;
     else if (el.type === 'number') out[el.name] = el.value === '' ? '' : Number(el.value);
+    else if (el.type === 'password') out[el.name] = el.value; // never alter passcodes or keys
     else out[el.name] = el.value.trim();
   }
   return out;

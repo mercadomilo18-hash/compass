@@ -169,8 +169,9 @@ export function alerts(state, now = new Date()) {
     }
   }
   out.push(...Fin.alerts(state.finance, now));
-  const NAMES = { google: 'Gmail / Google Calendar', microsoft: 'Outlook', canvas: 'Canvas', plaid: 'Bank (Plaid)', server: 'Compass server' };
-  Object.entries(state.meta.syncErrors || {}).forEach(([k, msg]) => out.push({ level: 'bad', text: `${NAMES[k] || k} sync failed: ${msg}`, go: 'settings' }));
+  const NAMES = { canvas: 'Canvas', plaid: 'Bank (Plaid)', server: 'Compass server', feeds: 'Calendar links' };
+  const label = (k) => (k.startsWith('google:') ? `Gmail (${k.slice(7)})` : k.startsWith('microsoft:') ? `Outlook (${k.slice(10)})` : k.startsWith('feed:') ? 'Calendar link' : NAMES[k] || k);
+  Object.entries(state.meta.syncErrors || {}).forEach(([k, msg]) => out.push({ level: 'bad', text: `${label(k)} sync failed: ${msg}`, go: 'settings' }));
   const missing = state.tasks.filter((t) => t.missing && !t.done);
   if (missing.length) out.push({ level: 'bad', text: `Canvas shows ${missing.length} missing submission${missing.length > 1 ? 's' : ''}: ${missing.slice(0, 2).map((t) => t.title).join(', ')}`, go: 'tasks' });
   const stale = importantEmails(state, now).filter((e) => e.unread && (now - new Date(e.date)) / 3.6e6 > 48);

@@ -27,7 +27,9 @@ const defaults = () => ({
     onboarded: false,
     serverUrl: '',
     serverToken: '',
+    voiceShare: false,
   },
+  voiceInbox: [],
   events: [],
   tasks: [],
   courses: [],
@@ -91,6 +93,9 @@ export function load() {
   return 'ready';
 }
 
+// A vault saved by the old buggy auto-lock has an empty salt and can't be opened by anyone.
+export const vaultDamaged = () => { try { return !JSON.parse(localStorage.getItem(VAULT)).salt; } catch { return true; } };
+
 export async function unlock(passcode) {
   const vault = JSON.parse(localStorage.getItem(VAULT));
   const s = unb64(vault.salt);
@@ -105,9 +110,9 @@ export async function unlock(passcode) {
   }
 }
 
-export function lock() {
+export async function lock() {
   if (!hasVault()) return false;
-  flush();
+  await flush();
   state = null; key = null; salt = null;
   return true;
 }
@@ -126,16 +131,24 @@ export async function setPasscode(passcode) {
 }
 
 let pending = null;
-async function persist() {
-  if (!state) return;
+let writing = Promise.resolve();
+
+// Snapshot state, key and salt together *before* any await, so a lock or passcode change
+// happening mid-save can never pair a ciphertext with the wrong salt. Saves run one at a time.
+function persist() {
+  if (!state) return writing;
   const json = JSON.stringify(state);
-  if (key) {
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(json));
-    localStorage.setItem(VAULT, JSON.stringify({ v: 1, salt: b64(salt), iv: b64(iv), ct: b64(ct) }));
-  } else {
-    localStorage.setItem(PLAIN, json);
-  }
+  const k = key, s = salt;
+  writing = writing.catch(() => {}).then(async () => {
+    if (k && s) {
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, k, new TextEncoder().encode(json));
+      localStorage.setItem(VAULT, JSON.stringify({ v: 1, salt: b64(s), iv: b64(iv), ct: b64(ct) }));
+    } else if (!k) {
+      localStorage.setItem(PLAIN, json);
+    }
+  });
+  return writing;
 }
 
 export function flush() {
@@ -152,6 +165,7 @@ export function subscribe(fn) { listeners.add(fn); return () => listeners.delete
 
 // The one way views change data: mutate, persist, re-render.
 export function update(fn) {
+  if (!state) return; // locked: late async work (e.g. a sync finishing) must not touch data
   fn(state);
   save();
   listeners.forEach((l) => l());

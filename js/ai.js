@@ -104,7 +104,7 @@ For school, use the Courses section: current grade, letter, and what average is 
 To add or change anything, call a tool — every tool call is shown to the user as a proposal they approve or decline; never claim something was saved until a tool result confirms it.
 When planning study time, place blocks inside the free slots listed in the context, split big work into 30–90 minute blocks, and leave buffers before deadlines.`;
 
-function contextBlock(now = new Date()) {
+export function contextBlock(now = new Date()) {
   const s = state;
   const from = startOfDay(now), to = addDays(from, 15);
   const occ = occurrences(s.events, from, to);
@@ -136,8 +136,8 @@ ${s.bible.readingPlan ? `Bible reading plan: ${Plans.status(s.bible, now).summar
 Courses:
 ${s.courses.map((c) => { const g = School.grade(c); return `- ${c.code} ${c.name || ''}: current ${g.current == null ? 'n/a' : g.current.toFixed(1) + '%'} (${g.letter}), ${g.gradedW}% marked, target ${g.target}%, needs ${g.needed == null ? 'n/a' : g.needed.toFixed(1) + '%'} avg on remaining ${g.remainingW}%; unmarked: ${c.items.filter((i) => !School.isGraded(i)).map((i) => `${i.name || i.type} ${i.weight}%${i.due ? ` due ${i.due.slice(0, 10)}` : ''}`).join(', ') || 'none'}`; }).join('\n') || '- (no courses added)'}
 ${moneyContext(s, now)}
-Email (${s.meta.sync?.google || s.meta.sync?.microsoft ? 'connected, read-only' : 'not connected'}):
-${(s.emails || []).slice(0, 15).map((e) => `- [${e.important ? 'important' : 'normal'}${e.unread ? ', unread' : ''}] ${e.date?.slice(0, 16)} from ${e.fromName || e.from}: "${e.subject}" — ${(e.snippet || '').slice(0, 160)}`).join('\n') || '- (none)'}
+Email (${Object.keys(s.meta.sync || {}).some((k) => /^(google|microsoft):/.test(k)) ? 'connected, read-only' : 'not connected'}):
+${(s.emails || []).slice(0, 25).map((e) => `- [${e.important ? 'important' : 'normal'}${e.unread ? ', unread' : ''}] ${e.date?.slice(0, 16)} to ${e.account || 'inbox'} from ${e.fromName || e.from}: "${e.subject}" — ${(e.snippet || '').slice(0, 160)}`).join('\n') || '- (none)'}
 Sources: calendar ${s.meta.lastImport?.canvas ? 'incl. Canvas import' : ''}${s.meta.sync?.canvas ? ', Canvas live' : ''}; bank ${s.meta.sync?.plaid ? 'Plaid (read-only)' : s.meta.lastImport?.bank ? 'CSV import ' + s.meta.lastImport.bank.slice(0, 10) : 'none'}.`;
 }
 
@@ -159,7 +159,7 @@ function moneyContext(s, now) {
 export const emailPrompt = (email) => `Here’s an email. Summarize it, list deadlines and required actions, propose tasks/events for anything concrete, and draft a reply if one is expected.\n\n---\n${email.slice(0, 12000)}`;
 
 // Sends the whole conversation; returns the API message.
-export async function send(messages) {
+export async function send(messages, { effort = 'low', extraSystem = '' } = {}) {
   const Anthropic = await loadSDK();
   const client = new Anthropic({ apiKey: state.settings.apiKey, dangerouslyAllowBrowser: true, maxRetries: 2 });
   try {
@@ -168,8 +168,8 @@ export async function send(messages) {
       max_tokens: 16000,
       betas: ['server-side-fallback-2026-07-01'],
       fallbacks: 'default',
-      output_config: { effort: 'low' },
-      system: [{ type: 'text', text: INSTRUCTIONS }, { type: 'text', text: contextBlock() }],
+      output_config: { effort },
+      system: [{ type: 'text', text: INSTRUCTIONS + extraSystem }, { type: 'text', text: contextBlock() }],
       tools: TOOLS,
       messages,
     });
@@ -181,6 +181,34 @@ export async function send(messages) {
     if (e instanceof Anthropic.APIError) throw new Error(`Claude error ${e.status ?? ''}: ${e.message}`);
     throw e;
   }
+}
+
+// Shrinks a photo/screenshot so it's quick to send (Claude reads ~1568 px on the long side well).
+export async function imageToBase64(file, max = 1568) {
+  const bmp = await createImageBitmap(file);
+  const scale = Math.min(1, max / Math.max(bmp.width, bmp.height));
+  const canvas = Object.assign(document.createElement('canvas'), { width: Math.round(bmp.width * scale), height: Math.round(bmp.height * scale) });
+  canvas.getContext('2d').drawImage(bmp, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+}
+
+const SCAN_PROMPT = `Read this image (it may be a photo of a handwritten or printed schedule, a syllabus, a timetable, a flyer, a whiteboard, or a screenshot of an email or app).
+Find every dated event, class, shift, deadline, exam, quiz or task. For each one call create_event (things at a time) or create_task (deadlines / to-dos), using the CONTEXT's current date and timezone to resolve dates like "Friday" or "Oct 3". For weekly classes, create the next occurrence and mention in your text that it repeats.
+If a date or time is unclear, make your best guess and say so in the notes field. Don't invent items that aren't in the image.
+After the tool calls, write one short sentence summarizing what you found. If you found nothing, say so.`;
+
+// One-off request (kept out of the chat history so photos don't fill up the phone's storage).
+// Returns { text, proposals: tool_use blocks } for the user to approve.
+export async function scanImage(base64, note = '') {
+  const res = await send([{ role: 'user', content: [
+    { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: base64 } },
+    { type: 'text', text: SCAN_PROMPT + (note ? `\n\nThe user added: ${note}` : '') },
+  ] }], { effort: 'medium' });
+  if (res.stop_reason === 'refusal') throw new Error('Claude couldn’t process that image.');
+  return {
+    text: res.content.filter((b) => b.type === 'text').map((b) => b.text).join(' ').trim(),
+    proposals: res.content.filter((b) => b.type === 'tool_use' && ['create_event', 'create_task'].includes(b.name)),
+  };
 }
 
 export async function testKey() {

@@ -4,6 +4,8 @@
 import { state, update, logAction } from './store.js';
 import { categorize } from './finance.js';
 import { matchCourse } from './school.js';
+import { parseICS, parseScheduleCSV } from './ics.js';
+import { contextBlock } from './ai.js';
 import { toLocalInput, dayKey, uid } from './util.js';
 
 export const isPaired = () => !!(state.settings.serverUrl && state.settings.serverToken);
@@ -35,6 +37,14 @@ export async function startOAuth(provider) {
 
 export const connectCanvas = (baseUrl, token) => api('/canvas', { method: 'POST', body: { baseUrl, token } });
 export const disconnect = (provider) => api(`/connections/${provider}`, { method: 'DELETE' });
+export const removeAccount = (id) => api(`/accounts/${encodeURIComponent(id)}`, { method: 'DELETE' });
+export const addFeed = (feed) => api('/feeds', { method: 'POST', body: feed });
+export const removeFeed = (id) => api('/feeds', { method: 'POST', body: { remove: id } });
+
+// Voice (Siri): share a text summary so the server can answer questions, and handle its proposals.
+export const pushContext = () => api('/context', { method: 'POST', body: { text: contextBlock() } });
+export const clearContext = () => api('/context', { method: 'DELETE' });
+export const dismissInbox = (id) => api(`/inbox/${id}`, { method: 'DELETE' });
 export const deleteServerData = () => api('/all', { method: 'DELETE' });
 export const testPush = () => api('/push/test', { method: 'POST' });
 
@@ -138,26 +148,78 @@ function mergePlaid(st, p) {
   st.meta.plaidCursors = { ...(st.meta.plaidCursors || {}), ...p.cursors };
 }
 
+// Calendar links: the server returns raw .ics / CSV text and we parse it here.
+function mergeFeed(st, feed, text) {
+  const source = `feed:${feed.id}`;
+  let events = [], tasks = [];
+  if (feed.type === 'csv') events = parseScheduleCSV(text, feed.category || 'church');
+  else ({ events, tasks } = parseICS(text, feed.kind === 'canvas' ? 'canvas' : 'ics'));
+  events = events.map((e) => ({ ...e, uid: `${feed.id}:${e.uid}`, category: feed.kind === 'canvas' ? 'class' : feed.category || e.category, source }));
+  mergeEvents(st, events, source);
+  for (const t of tasks) {
+    const cur = st.tasks.find((x) => x.uid === t.uid || x.uid === `canvas-a-${String(t.uid).replace(/\D/g, '')}`);
+    if (cur) Object.assign(cur, { title: cur.title, due: t.due, link: t.link || cur.link });
+    else st.tasks.push({ id: uid(), priority: 2, estimate: 90, done: false, subtasks: [], created: new Date().toISOString(), courseId: matchCourse(st.courses, t.title)?.id || '', ...t, source: 'canvas' });
+  }
+}
+
+const NAMES = { canvas: 'Canvas', plaid: 'Bank (Plaid)', feeds: 'Calendar links' };
+export const sourceName = (k) => (k.startsWith('google:') ? `Gmail ${k.slice(7)}` : k.startsWith('microsoft:') ? `Outlook ${k.slice(10)}` : NAMES[k] || k);
+
 let syncing = null;
 export function sync({ quiet = true } = {}) {
   if (!isPaired()) return Promise.resolve(null);
   if (syncing) return syncing;
   syncing = (async () => {
     try {
-      const r = await api('/sync', { method: 'POST', body: { plaidCursors: state.meta.plaidCursors || {} } });
+      const status = await api('/status');
+      const st0 = status.status || {};
+      // One request per source keeps each under Cloudflare's per-request limits, and one failing source never blocks the rest.
+      const parts = [
+        ...status.accounts.map((a) => ({ key: a.id, path: `account/${encodeURIComponent(a.id)}` })),
+        ...(st0.canvas?.connected ? [{ key: 'canvas', path: 'canvas' }] : []),
+        ...(st0.plaid?.connected ? [{ key: 'plaid', path: 'plaid', body: { plaidCursors: state.meta.plaidCursors || {} } }] : []),
+        ...(status.feeds.length ? [{ key: 'feeds', path: 'feeds' }] : []),
+      ];
+      const results = await Promise.all(parts.map((p) => api(`/sync/${p.path}`, { method: 'POST', body: p.body || {} }).catch((e) => ({ error: e.message }))));
+      const inbox = status.configured.voice ? await api('/inbox').catch(() => null) : null;
       update((st) => {
         const now = new Date().toISOString();
         st.meta.sync ||= {};
-        st.meta.syncErrors = r.errors || {};
-        const emails = [];
-        if (r.google) { emails.push(...r.google.emails); mergeEvents(st, r.google.events, 'google'); st.meta.sync.google = now; }
-        if (r.microsoft) { emails.push(...r.microsoft.emails); mergeEvents(st, r.microsoft.events, 'outlook'); st.meta.sync.microsoft = now; }
-        if (r.google || r.microsoft) st.emails = emails.sort((a, b) => new Date(b.date) - new Date(a.date));
-        if (r.canvas) { mergeCanvas(st, r.canvas); st.meta.sync.canvas = now; }
-        if (r.plaid) { mergePlaid(st, r.plaid); st.meta.sync.plaid = now; }
-        if (!quiet) logAction('sync', `Synced${Object.keys(r.errors || {}).length ? ` with errors: ${Object.keys(r.errors).join(', ')}` : ''}`);
+        const errors = {};
+        const liveAccounts = new Set(status.accounts.map((a) => a.id));
+        const liveFeeds = new Map(status.feeds.map((f) => [f.id, f]));
+        st.meta.feeds = status.feeds;
+        // Drop data from accounts / links that were disconnected.
+        st.events = st.events.filter((e) => !(String(e.source).startsWith('acct:') && !liveAccounts.has(e.source.slice(5)))
+          && !(String(e.source).startsWith('feed:') && !liveFeeds.has(e.source.slice(5))));
+        let emails = (st.emails || []).filter((e) => liveAccounts.has(`${e.provider === 'gmail' ? 'google' : 'microsoft'}:${e.account}`));
+        parts.forEach((p, i) => {
+          const r = results[i];
+          if (r.error) { errors[p.key] = r.error; return; }
+          if (!r.data) return;
+          st.meta.sync[p.key] = now;
+          if (liveAccounts.has(p.key)) {
+            const acctEmail = p.key.split(':').slice(1).join(':');
+            emails = [...emails.filter((e) => e.account !== acctEmail), ...r.data.emails];
+            mergeEvents(st, r.data.events, `acct:${p.key}`);
+          } else if (p.key === 'canvas') mergeCanvas(st, r.data);
+          else if (p.key === 'plaid') mergePlaid(st, r.data);
+          else if (p.key === 'feeds') {
+            for (const f of r.data.feeds) {
+              const meta = liveFeeds.get(f.id);
+              if (f.error) errors[`feed:${f.id}`] = `${meta?.name || 'Calendar link'}: ${f.error}`;
+              else if (meta) mergeFeed(st, meta, f.text);
+            }
+          }
+        });
+        st.emails = emails.sort((a, b) => new Date(b.date) - new Date(a.date));
+        if (inbox) st.voiceInbox = inbox.items;
+        st.meta.syncErrors = errors;
+        if (!quiet) logAction('sync', `Synced ${parts.length} source${parts.length === 1 ? '' : 's'}${Object.keys(errors).length ? ` (${Object.keys(errors).length} failed)` : ''}`);
       });
-      return r;
+      if (state?.settings.voiceShare) await pushContext().catch(() => {});
+      return { parts: parts.length, errors: state?.meta.syncErrors };
     } catch (e) {
       update((st) => { st.meta.syncErrors = { server: e.message }; });
       if (!quiet) throw e;

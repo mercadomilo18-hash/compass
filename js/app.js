@@ -4,6 +4,7 @@ import { $ } from './util.js';
 import { openEvent, openTask, toggleTask, toggleSubtask } from './forms.js';
 import { checkReminders } from './notify.js';
 import * as Connect from './connect.js';
+import { scanFlow } from './scan.js';
 import { rollGoals } from './views/habits.js';
 import today from './views/today.js';
 import calendar from './views/calendar.js';
@@ -24,7 +25,8 @@ const shared = {
   editTask: (el) => { const t = Store.state.tasks.find((x) => x.id === el.dataset.id); if (t) openTask(t); },
   toggleTask: (el) => toggleTask(el.dataset.id),
   toggleSub: (el) => toggleSubtask(el.dataset.task, el.dataset.id),
-  lock: () => { if (Store.lock()) showLock(); },
+  lock: async () => { if (await Store.lock()) showLock(); },
+  scanPhoto: () => scanFlow(),
 };
 
 const route = () => { const r = location.hash.slice(1).split('?')[0]; return VIEWS[r] ? r : 'today'; };
@@ -33,7 +35,7 @@ const route = () => { const r = location.hash.slice(1).split('?')[0]; return VIE
 function handleReturnParams() {
   const q = new URLSearchParams(location.hash.split('?')[1] || '');
   if (!q.size) return;
-  if (q.get('connected')) { toast(`${q.get('connected') === 'google' ? 'Google' : 'Microsoft'} connected — syncing…`); Connect.sync(); }
+  if (q.get('connected')) { toast(`${q.get('connected')} connected — syncing…`); Connect.sync(); }
   if (q.get('error')) toast(`Couldn’t connect: ${q.get('error')}`, 7000);
   history.replaceState(null, '', `#${route()}`);
 }
@@ -105,11 +107,11 @@ function bindEvents() {
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme);
 
   let hiddenAt = 0;
-  document.addEventListener('visibilitychange', () => {
+  document.addEventListener('visibilitychange', async () => {
     if (document.hidden) { hiddenAt = Date.now(); Store.flush(); return; }
     if (!Store.state) return;
     const mins = (Date.now() - hiddenAt) / 60000;
-    if (hiddenAt && Store.hasPasscode() && mins >= Store.state.settings.autoLockMin) { Store.lock(); showLock(); return; }
+    if (hiddenAt && Store.hasPasscode() && mins >= Store.state.settings.autoLockMin) { if (await Store.lock()) showLock(); return; }
     if (rollGoals(Store.state)) Store.save();
     checkReminders();
     maybeSync();
@@ -121,6 +123,16 @@ function bindEvents() {
 function showLock() {
   closeModal();
   $('#tabbar').innerHTML = ''; $('#sidebar').innerHTML = '';
+  if (Store.vaultDamaged()) {
+    $('#main').innerHTML = `<div class="lock">
+      <div class="lock-icon">${icon('lock', 36)}</div>
+      <h1>This saved data can’t be opened</h1>
+      <p>An earlier version of Compass had a bug that damaged the lock when it auto-locked, so even the right passcode won’t open it. Sorry about that — it’s fixed now.</p>
+      <p class="muted small">Reset to start fresh (and restore a backup if you made one). Your new passcode will work reliably.</p>
+      <button class="btn primary" id="reset-app">Reset and start fresh</button></div>`;
+    $('#reset-app').addEventListener('click', () => { Store.wipe(); Store.flush().then(() => location.reload()); });
+    return;
+  }
   $('#main').innerHTML = `<form class="lock" id="lock-form">
     <div class="lock-icon">${icon('lock', 36)}</div>
     <h1>Compass is locked</h1>
